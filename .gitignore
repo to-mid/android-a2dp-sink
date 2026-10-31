@@ -1,0 +1,14 @@
+/build/
+/dist/
+/signing/
+*.apk
+*.aab
+*.idsig
+*.jks
+*.keystore
+*.log
+.env
+.env.*
+local.properties
+.DS_Store
+._*

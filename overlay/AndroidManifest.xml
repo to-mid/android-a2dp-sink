@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="local.bluetooth.speaker.overlay" android:versionCode="1" android:versionName="1.0">
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="30" />
+    <overlay android:targetPackage="com.android.bluetooth" android:isStatic="false" android:priority="900" />
+    <application android:hasCode="false" android:label="Bluetooth Speaker Resources" />
+</manifest>
