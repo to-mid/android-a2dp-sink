@@ -1,0 +1,23 @@
+{
+  "captureDate": "2026-10-31",
+  "model": "M2102J2SC",
+  "device": "thyme",
+  "android": "11",
+  "sdk": 30,
+  "rootManager": "Magisk",
+  "rootVersion": "28.1:MAGISK:R",
+  "backend": "miui-root-apk",
+  "legacyModule": false,
+  "legacyStandalone": true,
+  "canControl": true,
+  "runtimeAudio": {
+    "observed": true,
+    "active": true,
+    "sampleRate": 44100,
+    "format": "00000001",
+    "channelMask": "00000003",
+    "device": "0x2 (AUDIO_DEVICE_OUT_SPEAKER)"
+  },
+  "playbackObserved": true,
+  "playbackVerified": false
+}

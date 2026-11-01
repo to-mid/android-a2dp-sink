@@ -70,7 +70,7 @@ configure_mode() {
 
 profile_ready() {
     if [ "$1" = sink ]; then EXPECTED=A2dpSinkService; OTHER=A2dpService; else EXPECTED=A2dpService; OTHER=A2dpSinkService; fi
-    PROFILES=$(dumpsys bluetooth_manager)
+    PROFILES=$(dumpsys bluetooth_manager | grep -E '^Profile:|^  state:|Bluetooth crashed')
     printf '%s\n' "$PROFILES" | grep -q "^Profile: $EXPECTED$" &&
         ! printf '%s\n' "$PROFILES" | grep -q "^Profile: $OTHER$"
 }

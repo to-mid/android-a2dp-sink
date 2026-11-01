@@ -1,0 +1,55 @@
+{
+  "date": "2026-11-01",
+  "device": "Redmi K20 Pro",
+  "android": 13,
+  "sdk": 33,
+  "installedVersionAtProbe": "3.0-beta5",
+  "initialDiagnosis": {
+    "canControl": true,
+    "profileAccess": "framework-connector",
+    "profileInvocation": "receiver"
+  },
+  "initialStatus": {
+    "error": "java.lang.NullPointerException",
+    "stage": "BluetoothAdapter.getName",
+    "stack": [
+      "com.android.internal.app.IAppOpsService$Stub$Proxy.reportRuntimeAppOpAccessMessageAndGetConfig",
+      "android.app.AppOpsManager$1.reportStackTraceIfNeeded",
+      "android.bluetooth.IBluetoothManager$Stub$Proxy.getName",
+      "android.bluetooth.BluetoothAdapter.getName"
+    ]
+  },
+  "probeWithProcessLocalSamplingDisabled": {
+    "adapterEnabled": true,
+    "name": "Redmi K20 Pro",
+    "addressReadSucceeded": true,
+    "scanModeReadSucceeded": true,
+    "bondedDeviceCount": 3,
+    "sourceBinderAvailable": true,
+    "sourceConnectedDeviceCount": 0
+  },
+  "systemPermissionSettingsChanged": false,
+  "playbackVerified": false,
+  "candidateVersion": "3.0-beta6",
+  "candidateControlExercise": "passed",
+  "candidateSha256": "2b7b9fc16acf4e7c879fd740a6ca53ebc29a0f393d30d4781057b4d2f9516a7b",
+  "candidateRuntimeControllerReady": true,
+  "candidateProfileProbe": "call-succeeded",
+  "candidateProcessCompatibility": "process-local-stack-sampling",
+  "candidateChecksPassed": [
+    "status query",
+    "source and sink role switching",
+    "profile binder and local UUIDs",
+    "role switching while Bluetooth is off",
+    "repeated enable and restore without extra radio transitions",
+    "boot apply idempotence",
+    "original property restoration"
+  ],
+  "restoredState": {
+    "mode": "source",
+    "enabled": true,
+    "defaultMode": "source",
+    "restoreOnBoot": false
+  },
+  "extraUiAndAudioValidation": "not-completed-adb-authorization-lost"
+}

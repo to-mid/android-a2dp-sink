@@ -1,11 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="local.bluetooth.speaker" android:versionCode="2" android:versionName="2.0">
+    package="local.bluetooth.speaker" android:versionCode="8" android:versionName="3.0-beta6">
     <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <queries>
+        <package android:name="com.android.bluetooth" />
+        <package android:name="com.google.android.bluetooth" />
+    </queries>
     <application android:label="@string/app_name" android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:allowBackup="false" android:supportsRtl="true" android:icon="@drawable/speaker">
+        <receiver android:name=".BootReceiver" android:exported="true" android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <service android:name=".BootRestoreService" android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="true" android:directBootAware="true" />
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
