@@ -18,7 +18,7 @@ args = parser.parse_args()
 
 def adb(*command):
     result = subprocess.run(["adb", "-s", args.serial, *command], text=True,
-                            capture_output=True, timeout=125)
+                            capture_output=True, timeout=330)
     if result.returncode:
         raise RuntimeError(result.stdout + result.stderr)
     return result.stdout.strip()

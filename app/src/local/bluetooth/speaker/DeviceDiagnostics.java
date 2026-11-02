@@ -102,7 +102,12 @@ final class DeviceDiagnostics {
     }
 
     static JSONObject root(boolean observeAudio) throws Exception {
+        return root(observeAudio, null);
+    }
+
+    static JSONObject root(boolean observeAudio, String preference) throws Exception {
         JSONObject report = identity();
+        if (preference != null) report.put("schemePreference", preference);
         report.put("level", "root");
         report.put("rootAvailable", Process.myUid() == 0);
         if (Process.myUid() != 0) { evaluate(report); return report; }
@@ -333,18 +338,35 @@ final class DeviceDiagnostics {
             && !"unsupported".equals(report.optString("profileInvocation", "unsupported"));
         boolean roleResources = booleanResource(report, "sinkResource") && booleanResource(report, "sourceResource")
             && booleanResource(report, "targetResource") && booleanResource(report, "controllerResource");
-        AdaptationPlan plan = AdaptationPlan.choose(profileFlags, report.optBoolean("vendorPropertyReferences"),
+        List<AdaptationPlan> candidates = AdaptationPlan.candidates(profileFlags, report.optBoolean("vendorPropertyReferences"),
             roleResources, focus, "true".equals(report.optString("focusResource")),
             report.optBoolean("fabricatedOverlay"), report.optBoolean("packagedMapping"),
             !report.optString("propertyWriter").isEmpty());
-        boolean standalone = api && code && nativeCode && plan.supported();
         boolean legacy = legacyAbi() && code && nativeCode && report.optBoolean("legacyModule");
+        if (!api || !code || !nativeCode) candidates.clear();
+        if (candidates.isEmpty() && legacy) candidates.add(AdaptationPlan.fromId("existing-module"));
+        JSONArray available = new JSONArray();
+        for (AdaptationPlan candidate : candidates) available.put(new JSONObject()
+            .put("id", candidate.id()).put("label", AdaptationPlan.label(candidate.id()))
+            .put("configuration", candidate.configuration).put("resources", candidate.resources));
+        String preference = report.optString("schemePreference", RootController.preference());
+        JSONObject cached = RootController.cachedPlan();
+        String chosen = "auto".equals(preference) ? cached == null ? "" : cached.optString("planId") : preference;
+        AdaptationPlan plan = null;
+        for (AdaptationPlan candidate : candidates) if (candidate.id().equals(chosen)) plan = candidate;
+        if (plan == null && "auto".equals(preference) && !candidates.isEmpty()) plan = candidates.get(0);
+        report.put("schemePreference", preference).put("plans", available);
+        report.put("receiverVerified", cached != null && plan != null && plan.id().equals(cached.optString("planId"))
+            && cached.optBoolean("receiverVerified"));
+        boolean standalone = plan != null && !"existing-module".equals(plan.configuration);
+        legacy = plan != null && "existing-module".equals(plan.configuration);
         String backend = standalone ? "profile-properties".equals(plan.configuration) ? "aosp-root-apk" : "resource-root-apk"
             : legacy ? "legacy-existing-module" : "none";
         report.put("configurationStrategy", standalone ? plan.configuration : legacy ? "existing-module" : "none");
         report.put("resourceStrategy", standalone ? plan.resources : legacy ? "existing-module" : "none");
         report.put("resourceHelperRequired", standalone && "packaged-idmap".equals(plan.resources));
         report.put("profileBindingRequired", "service-peek".equals(report.optString("profileAccess")));
+        report.put("planId", plan == null ? "" : plan.id());
         String verdict, title;
         if (report.has("bluetoothHardware") && Boolean.FALSE.equals(report.opt("bluetoothHardware"))) {
             verdict = "missing_components"; title = "未发现经典蓝牙功能";
@@ -365,8 +387,8 @@ final class DeviceDiagnostics {
             if (!root) reasons.put("基本检查发现接收端代码标识，请运行完整检测确认 root 和控制接口。");
             else {
                 if (!api) reasons.put("未找到完整且兼容的蓝牙控制接口。");
-                if ("none".equals(plan.configuration)) reasons.put("未确认角色属性，也未发现蓝牙原生库对厂商角色属性的引用。");
-                if ("none".equals(plan.resources)) reasons.put("没有满足当前资源条件的覆盖方式。");
+                if (!"auto".equals(preference) && plan == null) reasons.put("所选方案当前不可用，请改为自动或其他可用方案。");
+                else if (candidates.isEmpty()) reasons.put("没有满足当前属性、资源及工具条件的适配方案。");
                 if (!focus) reasons.put("无法确认自动音频焦点资源。");
                 if (report.optString("propertyWriter").isEmpty()) reasons.put("未找到可用的运行时属性工具。");
             }
@@ -413,6 +435,8 @@ final class DeviceDiagnostics {
         if (report.has("controllerError")) out.append("调用错误：").append(report.optString("controllerError")).append('\n');
         out.append("角色配置：").append(report.optString("configurationStrategy")).append('\n');
         out.append("资源覆盖：").append(report.optString("resourceStrategy")).append('\n');
+        out.append("方案选择：").append(AdaptationPlan.label(report.optString("schemePreference", "auto"))).append('\n');
+        out.append("接收切换验证：").append(report.optBoolean("receiverVerified") ? "通过" : "待验证").append('\n');
         if (report.optBoolean("resourceHelperRequired")) out.append("首次启用会安装内置的资源辅助 APK。\n");
         out.append("后端：").append(report.optString("backend")).append("\n\n");
         JSONArray reasons = report.optJSONArray("reasons");

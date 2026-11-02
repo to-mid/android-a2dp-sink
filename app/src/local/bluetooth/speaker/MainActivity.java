@@ -49,6 +49,9 @@ public class MainActivity extends Activity {
     private RadioGroup modes;
     private RadioButton sourceMode, sinkMode;
     private Spinner bootMode;
+    private Spinner scheme;
+    private final ArrayList<String> schemeValues = new ArrayList<>();
+    private String schemePreference = "auto";
     private Switch bluetooth;
     private Button pairing, detect, report;
     private SeekBar volume;
@@ -125,6 +128,25 @@ public class MainActivity extends Activity {
         add(root, diagnosisRow, 16);
         diagnosisSummary = text("", 13, Color.DKGRAY);
         add(root, diagnosisSummary, 4);
+
+        LinearLayout schemeRow = row();
+        schemeRow.setOrientation(LinearLayout.VERTICAL);
+        schemeRow.addView(text("适配方案", 15, Color.BLACK), new LinearLayout.LayoutParams(-1, -2));
+        scheme = new Spinner(this);
+        schemeRow.addView(scheme, new LinearLayout.LayoutParams(-1, dp(48)));
+        add(root, schemeRow, 12);
+        renderSchemes();
+        scheme.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (rendering || busy || position != scheme.getSelectedItemPosition()
+                        || position >= schemeValues.size()) return;
+                String value = schemeValues.get(position);
+                if (value.equals(schemePreference)) return;
+                releaseProfile();
+                run("scheme", value, null);
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) {}
+        });
 
         add(root, text("当前模式", 15, Color.BLACK), 18);
         modes = new RadioGroup(this);
@@ -300,6 +322,8 @@ public class MainActivity extends Activity {
     }
 
     private void renderDiagnosis() {
+        schemePreference = diagnosis.optString("schemePreference", "auto");
+        renderSchemes();
         diagnosisTitle.setText(diagnosis.optString("title", "尚未检测"));
         diagnosisTitle.setTextColor(canControl ? Color.rgb(24, 121, 78) : Color.rgb(160, 88, 32));
         String summary = "Android " + diagnosis.optString("android", Build.VERSION.RELEASE)
@@ -322,6 +346,31 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void renderSchemes() {
+        boolean previousRendering = rendering;
+        rendering = true;
+        schemeValues.clear();
+        schemeValues.add("auto");
+        ArrayList<String> labels = new ArrayList<>();
+        labels.add("自动");
+        JSONArray available = diagnosis.optJSONArray("plans");
+        if (available != null) for (int i = 0; i < available.length(); i++) {
+            JSONObject item = available.optJSONObject(i);
+            if (item == null) continue;
+            schemeValues.add(item.optString("id"));
+            labels.add(item.optString("label"));
+        }
+        if (!schemeValues.contains(schemePreference)) {
+            schemeValues.add(schemePreference);
+            labels.add(AdaptationPlan.label(schemePreference) + "（当前不可用）");
+        }
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_item, labels);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        scheme.setAdapter(adapter);
+        scheme.setSelection(schemeValues.indexOf(schemePreference));
+        rendering = previousRendering;
+    }
+
     private void showReport() {
         TextView content = text(DeviceDiagnostics.text(diagnosis), 14, Color.BLACK);
         content.setTextIsSelectable(true);
@@ -342,6 +391,8 @@ public class MainActivity extends Activity {
         for (View control : controls) control.setEnabled(ready);
         detect.setEnabled(!busy);
         report.setEnabled(!busy && diagnosis.length() > 0);
+        scheme.setEnabled(!busy && diagnosis.optBoolean("rootAvailable")
+            && diagnosis.optJSONArray("plans") != null && diagnosis.optJSONArray("plans").length() > 0);
         volume.setEnabled(ready);
         if (pairing != null) pairing.setEnabled(ready && current.optBoolean("enabled"));
         for (View control : controls) {
@@ -374,7 +425,7 @@ public class MainActivity extends Activity {
     private void refresh() { if (canControl) run("status", null, null); }
 
     private void run(String command, String argument, Consumer<JSONObject> success) {
-        if (busy || isDestroyed() || !canControl) return;
+        if (busy || isDestroyed() || !canControl && !"scheme".equals(command)) return;
         busy = true;
         gates();
         message("status".equals(command) ? "" : "mode".equals(command)
@@ -392,7 +443,9 @@ public class MainActivity extends Activity {
                 busy = false;
                 if (response.has("error")) {
                     message("操作失败：" + response.optString("error"));
-                    if ("mode".equals(command)) handler.postDelayed(refreshAfterEvent, 1500);
+                    if ("scheme".equals(command)) {
+                        scheme.setSelection(schemeValues.indexOf(schemePreference));
+                    } else if ("mode".equals(command)) handler.postDelayed(refreshAfterEvent, 1500);
                 } else if ("status".equals(command)) {
                     current = response;
                     render();
@@ -403,7 +456,8 @@ public class MainActivity extends Activity {
                     if ("mode".equals(command) || "default-mode".equals(command)) startup(true);
                     if ("restore".equals(command)) startup(false);
                     message("操作已完成");
-                    handler.postDelayed(refreshAfterEvent, 500);
+                    if ("scheme".equals(command)) diagnose(true);
+                    else handler.postDelayed(refreshAfterEvent, 500);
                 }
                 gates();
             });
@@ -432,6 +486,11 @@ public class MainActivity extends Activity {
         boolean standalone = "aosp-root-apk".equals(current.optString("backend"))
             || "resource-root-apk".equals(current.optString("backend"));
         backend.setText(standalone ? "控制方式：Root APK（无需模块）" : "控制方式：已有旧系统兼容配置");
+        if (standalone) backend.append("\n当前方案：" + AdaptationPlan.label(current.optString("planId"))
+            + (current.optBoolean("receiverVerified") ? " · 已验证接收切换" : " · 接收切换待验证"));
+        schemePreference = current.optString("schemePreference", "auto");
+        int schemePosition = schemeValues.indexOf(schemePreference);
+        if (schemePosition >= 0) scheme.setSelection(schemePosition);
         startup(current.optBoolean("restoreOnBoot"));
         state.setText(!enabled ? "蓝牙已关闭" : ready
             ? sink ? "音箱接收已就绪" : "普通发送已就绪" : "正在准备蓝牙音频服务…");

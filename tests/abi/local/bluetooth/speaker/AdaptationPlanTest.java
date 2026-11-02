@@ -20,7 +20,24 @@ public final class AdaptationPlanTest {
             "missing focus resource");
         require(!AdaptationPlan.choose(true, true, true, true, true, true, true, false).supported(),
             "missing property writer");
-        System.out.println("PASS: capability selection, property evidence, resource fallback, existing focus, missing requirements");
+        java.util.List<AdaptationPlan> plans = AdaptationPlan.candidates(true, true, true, true, true, true, true, true);
+        require(plans.size() == 5, "both protocols must remain available for fallback");
+        require(plans.get(0).id().equals("vendor-properties/fabricated-overlay"), "vendor evidence and dynamic resources first");
+        require(plans.get(1).id().equals("vendor-properties/packaged-idmap"), "vendor resource fallback");
+        require(plans.get(2).id().equals("profile-properties/fabricated-overlay"), "AOSP remains a candidate");
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (AdaptationPlan plan : plans) {
+            require(ids.add(plan.id()), "duplicate candidate");
+            require(AdaptationPlan.fromId(plan.id()) != null, "manual selection must round-trip");
+        }
+        require(AdaptationPlan.fromId("vendor-properties/system-default") == null,
+            "vendor protocol cannot bypass role resources");
+        require(AdaptationPlan.fromId("unknown/fabricated-overlay") == null, "unknown manual selection");
+        require(AdaptationPlan.candidates(false, true, true, true, false, false, true, true).size() == 1,
+            "absent fabrication tool must not be offered");
+        require(AdaptationPlan.candidates(true, false, false, true, false, false, true, true).isEmpty(),
+            "packaged mapping requires all role resources");
+        System.out.println("PASS: candidates, ordering, protocol evidence, resource fallback, manual IDs, missing requirements");
     }
     private static void check(AdaptationPlan plan, String configuration, String resources) {
         require(plan.supported() && plan.configuration.equals(configuration) && plan.resources.equals(resources),

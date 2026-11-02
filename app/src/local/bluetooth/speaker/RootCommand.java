@@ -23,6 +23,11 @@ public final class RootCommand {
                 finish(DeviceDiagnostics.root("diagnose".equals(command)));
             }
             if ("apply-boot".equals(command)) finish(RootController.applyBoot());
+            if ("scheme".equals(command)) {
+                RootController.setScheme(argument);
+                finish(result.put("ok", true).put("schemePreference", RootController.preference())
+                    .put("planId", RootController.planId()));
+            }
             if ("install-module".equals(command)) throw new IllegalStateException("此版本不安装模块，请运行设备检测");
             if ("mode".equals(command)) {
                 RootController.changeMode(argument);
@@ -90,6 +95,10 @@ public final class RootCommand {
             boolean sink = "sink".equals(mode);
             if ("status".equals(command)) {
                 result.put("controllerReady", true);
+                result.put("schemePreference", RootController.preference());
+                result.put("planId", RootController.planId());
+                result.put("receiverVerified", RootController.receiverVerified());
+                result.put("selectionAttempts", RootController.settings().optJSONArray("lastSelectionAttempts"));
                 result.put("backend", backend);
                 result.put("configurationStrategy", RootController.configuration());
                 result.put("resourceStrategy", RootController.resources());

@@ -28,7 +28,9 @@ final class RootClient {
         });
         reader.start();
         try {
-            if (!process.waitFor(105, TimeUnit.SECONDS)) {
+            boolean selection = "mode".equals(command) || "scheme".equals(command)
+                || "enable".equals(command) || "restart".equals(command) || "apply-boot".equals(command);
+            if (!process.waitFor(selection ? 300 : 105, TimeUnit.SECONDS)) {
                 throw new IllegalStateException("操作超时，请检查 root 授权和蓝牙状态");
             }
             reader.join(1000);

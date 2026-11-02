@@ -81,7 +81,7 @@ final class LegacyResources {
         return new ComponentName(RootController.targetPackage(), "com.android.bluetooth." + name);
     }
 
-    private static String installed() {
+    static String installed() {
         String path = DeviceDiagnostics.command("/system/bin/pm", "path", PACKAGE);
         for (String line : path.split("\n")) if (line.startsWith("package:")) return line.substring(8);
         return "";
