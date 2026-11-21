@@ -19,6 +19,8 @@ public final class RootCommand {
             String command = args.length == 0 ? "status" : args[0];
             String argument = args.length > 1 ? args[1] : "";
             JSONObject result = new JSONObject();
+            if ("status".equals(command) && RootController.operationInProgress())
+                finish(result.put("operationInProgress", true));
             if ("diagnose".equals(command) || "check-support".equals(command)) {
                 finish(DeviceDiagnostics.root("diagnose".equals(command)));
             }
@@ -105,11 +107,13 @@ public final class RootCommand {
                 result.put("bluetoothPackage", RootController.targetPackage());
                 result.put("profileAccess", NativeBluetooth.access());
                 result.put("profileInvocation", NativeBluetooth.abi());
-                result.put("profileBindingRequired", "service-peek".equals(NativeBluetooth.access()));
+                result.put("profileBindingRequired", false);
                 result.put("enabled", adapter.isEnabled());
                 result.put("mode", mode);
                 result.put("defaultMode", RootController.defaultMode());
                 result.put("restoreOnBoot", RootController.standalone() && RootController.settings().optBoolean("restoreOnBoot"));
+                result.put("rootBootHook", RootController.standalone() && BootStartup.HOOK.isFile());
+                result.put("nativeCompatibility", NativeCompatibility.status());
                 result.put("profileVerified", RootController.standalone() && RootController.settings().optBoolean("profileVerified"));
                 result.put("name", adapter.getName());
                 result.put("address", adapter.getAddress());
@@ -136,9 +140,8 @@ public final class RootCommand {
             if ("connect".equals(command) || "disconnect".equals(command)) {
                 if (!BluetoothAdapter.checkBluetoothAddress(argument)) throw new IllegalArgumentException("Invalid Bluetooth address");
                 BluetoothDevice device = adapter.getRemoteDevice(argument);
-                Object accepted = "connect".equals(command)
-                    ? NativeBluetooth.call(profile, sink, "setConnectionPolicy", device, 100)
-                    : NativeBluetooth.call(profile, sink, "disconnect", device);
+                if ("connect".equals(command)) finish(BluetoothConnection.connect(profile, sink, device));
+                Object accepted = NativeBluetooth.call(profile, sink, "disconnect", device);
                 result.put("ok", accepted);
             } else {
                 result.put("profileReady", true);

@@ -57,15 +57,18 @@ public class MainActivity extends Activity {
     private SeekBar volume;
     private JSONObject current = new JSONObject();
     private JSONObject diagnosis = new JSONObject();
-    private boolean busy, visible, rendering, profileBound, canControl;
+    private boolean busy, refreshing, refreshPending, externalBusy, visible, rendering, profileBound, canControl;
+    private String deviceRows = "";
     private String boundMode = "";
     private long pairingUntil;
     private final Runnable refreshAfterEvent = () -> refresh();
     private final ServiceConnection profileConnection = new ServiceConnection() {
         @Override public void onServiceConnected(ComponentName component, IBinder binder) {
+            handler.removeCallbacks(refreshAfterEvent);
             handler.postDelayed(refreshAfterEvent, 250);
         }
         @Override public void onServiceDisconnected(ComponentName component) {
+            handler.removeCallbacks(refreshAfterEvent);
             handler.postDelayed(refreshAfterEvent, 500);
         }
     };
@@ -174,7 +177,7 @@ public class MainActivity extends Activity {
         bootMode.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
                 String value = DEFAULT_VALUES[position];
-                if (!rendering && !busy && canControl
+                if (!rendering && !busy && canControl && position == bootMode.getSelectedItemPosition()
                         && !value.equals(current.optString("defaultMode", "source"))) {
                     run("default-mode", value, result -> {
                         try { current.put("defaultMode", value); } catch (Exception ignored) {}
@@ -276,6 +279,7 @@ public class MainActivity extends Activity {
         visible = false;
         handler.removeCallbacks(polling);
         handler.removeCallbacks(countdown);
+        handler.removeCallbacks(refreshAfterEvent);
         super.onPause();
     }
     @Override protected void onDestroy() {
@@ -343,6 +347,7 @@ public class MainActivity extends Activity {
             state.setText("控制功能未启用");
             playing.setText("");
             devices.removeAllViews();
+            deviceRows = "";
         }
     }
 
@@ -387,7 +392,7 @@ public class MainActivity extends Activity {
     }
 
     private void gates() {
-        boolean ready = !busy && canControl && current.optBoolean("controllerReady");
+        boolean ready = !busy && !externalBusy && canControl && current.optBoolean("controllerReady");
         for (View control : controls) control.setEnabled(ready);
         detect.setEnabled(!busy);
         report.setEnabled(!busy && diagnosis.length() > 0);
@@ -425,11 +430,18 @@ public class MainActivity extends Activity {
     private void refresh() { if (canControl) run("status", null, null); }
 
     private void run(String command, String argument, Consumer<JSONObject> success) {
-        if (busy || isDestroyed() || !canControl && !"scheme".equals(command)) return;
-        busy = true;
-        gates();
-        message("status".equals(command) ? "" : "mode".equals(command)
-            ? "正在切换蓝牙配置…" : "正在处理…");
+        if (isDestroyed() || !canControl && !"scheme".equals(command)) return;
+        boolean status = "status".equals(command);
+        if (!status && externalBusy) return;
+        if (busy) { if (status) refreshPending = true; return; }
+        if (status && refreshing) { refreshPending = true; return; }
+        if (status) refreshing = true;
+        else {
+            busy = true;
+            handler.removeCallbacks(refreshAfterEvent);
+            gates();
+            message("mode".equals(command) ? "正在切换蓝牙配置…" : "正在处理…");
+        }
         worker.execute(() -> {
             JSONObject result;
             try { result = RootClient.call(this, command, argument); }
@@ -440,26 +452,44 @@ public class MainActivity extends Activity {
             JSONObject response = result;
             handler.post(() -> {
                 if (isDestroyed()) return;
-                busy = false;
+                if (status) refreshing = false; else busy = false;
+                // A status read queued before a mutation must not overwrite its controls.
+                if (status && busy) { refreshPending = true; return; }
                 if (response.has("error")) {
                     message("操作失败：" + response.optString("error"));
                     if ("scheme".equals(command)) {
                         scheme.setSelection(schemeValues.indexOf(schemePreference));
                     } else if ("mode".equals(command)) handler.postDelayed(refreshAfterEvent, 1500);
                 } else if ("status".equals(command)) {
-                    current = response;
-                    render();
+                    externalBusy = response.optBoolean("operationInProgress");
+                    if (externalBusy) {
+                        releaseProfile();
+                        handler.removeCallbacks(refreshAfterEvent);
+                        handler.postDelayed(refreshAfterEvent, 1000);
+                    } else {
+                        current = response;
+                        render();
+                    }
                 } else if (response.has("ok") && !response.optBoolean("ok")) {
                     message("系统未接受操作，请刷新检查状态。");
                 } else {
                     if (success != null) success.accept(response);
+                    try {
+                        if ("mode".equals(command)) current.put("mode", argument);
+                        if ("default-mode".equals(command)) current.put("defaultMode", argument);
+                    } catch (Exception ignored) {}
                     if ("mode".equals(command) || "default-mode".equals(command)) startup(true);
                     if ("restore".equals(command)) startup(false);
-                    message("操作已完成");
+                    message("connect".equals(command) ? "音频已连接" : "操作已完成");
                     if ("scheme".equals(command)) diagnose(true);
                     else handler.postDelayed(refreshAfterEvent, 500);
                 }
                 gates();
+                if (refreshPending && !busy) {
+                    refreshPending = false;
+                    handler.removeCallbacks(refreshAfterEvent);
+                    handler.postDelayed(refreshAfterEvent, 650);
+                }
             });
         });
     }
@@ -509,9 +539,12 @@ public class MainActivity extends Activity {
         }
         playing.setText(message.length() == 0 ? sink ? "未连接音频源" : "未连接耳机或音箱" : message.toString());
         deviceHeading.setText(sink ? "已配对音频源" : "已配对耳机／音箱");
+        JSONArray paired = current.optJSONArray("paired");
+        String rows = mode + ":" + String.valueOf(paired) + ":" + connectionAddresses(connected);
+        if (!rows.equals(deviceRows)) {
+        deviceRows = rows;
         for (int i = controls.size() - 1; i >= 0; i--) if ("device".equals(controls.get(i).getTag())) controls.remove(i);
         devices.removeAllViews();
-        JSONArray paired = current.optJSONArray("paired");
         int displayed = 0;
         if (paired != null) for (int i = 0; i < paired.length(); i++) {
             JSONObject device = paired.optJSONObject(i);
@@ -543,9 +576,18 @@ public class MainActivity extends Activity {
             devices.addView(divider, new LinearLayout.LayoutParams(-1, dp(1)));
         }
         if (displayed == 0) devices.addView(text("暂无匹配的已配对设备", 14, Color.DKGRAY));
+        }
         rendering = false;
         ensureProfile(mode, enabled);
+        handler.removeCallbacks(countdown);
         handler.post(countdown);
+    }
+
+    private static String connectionAddresses(JSONArray connected) {
+        java.util.TreeSet<String> addresses = new java.util.TreeSet<>();
+        if (connected != null) for (int i = 0; i < connected.length(); i++)
+            addresses.add(connected.optJSONObject(i).optString("address"));
+        return addresses.toString();
     }
 
     private void rename() {

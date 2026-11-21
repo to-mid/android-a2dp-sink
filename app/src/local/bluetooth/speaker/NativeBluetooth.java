@@ -50,11 +50,17 @@ final class NativeBluetooth {
 
     static Object legacyProfile(boolean sink, String packageName) throws Exception {
         Object manager = Class.forName("android.app.ActivityManager").getMethod("getService").invoke(null);
-        Intent intent = new Intent();
+        Intent intent = new Intent(interfaceName(sink));
         intent.setComponent(new ComponentName(packageName, sink
             ? "com.android.bluetooth.a2dpsink.A2dpSinkService" : "com.android.bluetooth.a2dp.A2dpService"));
         IBinder binder = (IBinder) Class.forName("android.app.IActivityManager")
             .getMethod("peekService", Intent.class, String.class, String.class).invoke(manager, intent, null, "android");
+        if (binder == null) {
+            // Older UI bindings used an explicit component without an action.
+            intent.setAction(null);
+            binder = (IBinder) Class.forName("android.app.IActivityManager")
+                .getMethod("peekService", Intent.class, String.class, String.class).invoke(manager, intent, null, "android");
+        }
         if (binder == null) return null;
         return Class.forName(interfaceName(sink) + "$Stub").getMethod("asInterface", IBinder.class).invoke(null, binder);
     }
@@ -63,13 +69,38 @@ final class NativeBluetooth {
         return Class.forName("android.content.AttributionSource").getMethod("myAttributionSource").invoke(null);
     }
 
+    static Context context() throws Exception {
+        if (systemContext == null) {
+            Class<?> activityThread = Class.forName("android.app.ActivityThread");
+            Object thread = activityThread.getMethod("systemMain").invoke(null);
+            systemContext = (Context) activityThread.getMethod("getSystemContext").invoke(thread);
+        }
+        return systemContext;
+    }
+
     static Object profile(BluetoothAdapter adapter, boolean sink) throws Exception {
         return profile(adapter, sink, RootController.targetPackage());
     }
 
     static Object profile(BluetoothAdapter adapter, boolean sink, String packageName) throws Exception {
         String access = access();
-        if ("service-peek".equals(access)) return legacyProfile(sink, packageName);
+        if ("service-peek".equals(access)) {
+            Object service = legacyProfile(sink, packageName);
+            if (service != null) return service;
+            // Android 11 peekService returns the binding for the service's start
+            // intent. A registered app creates that binding after an adapter cycle.
+            Process start = new ProcessBuilder("am", "start-foreground-service", "--user", "0", "-n",
+                "local.bluetooth.speaker/.ProfileAccessService", "--es", "package", packageName,
+                "--ez", "sink", Boolean.toString(sink)).redirectErrorStream(true).start();
+            try {
+                for (int i = 0; i < 40; i++) {
+                    Thread.sleep(100);
+                    service = legacyProfile(sink, packageName);
+                    if (service != null) return service;
+                }
+                return null;
+            } finally { start.destroy(); }
+        }
         if ("framework-connector".equals(access)) {
             Class<?> proxyType = Class.forName(sink ? "android.bluetooth.BluetoothA2dpSink" : "android.bluetooth.BluetoothA2dp");
             java.lang.reflect.Constructor<?> constructor = proxyType.getDeclaredConstructor(
@@ -128,6 +159,9 @@ final class NativeBluetooth {
                 Class<?> type = Class.forName(interfaceName(sink));
                 Method connected = BluetoothInvocation.resolve(type, "getConnectedDevices");
                 BluetoothInvocation.resolve(type, "setConnectionPolicy", BluetoothDevice.class, int.class);
+                BluetoothInvocation.resolve(type, "getConnectionPolicy", BluetoothDevice.class);
+                BluetoothInvocation.resolve(type, "getConnectionState", BluetoothDevice.class);
+                BluetoothInvocation.resolve(type, "connect", BluetoothDevice.class);
                 BluetoothInvocation.resolve(type, "disconnect", BluetoothDevice.class);
                 BluetoothInvocation.resolve(type, "isA2dpPlaying", BluetoothDevice.class);
                 String current = BluetoothInvocation.abi(connected);

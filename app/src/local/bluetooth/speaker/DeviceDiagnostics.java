@@ -174,8 +174,6 @@ final class DeviceDiagnostics {
                     if (profile != null) {
                         NativeBluetooth.call(profile, sink, "getConnectedDevices");
                         report.put("profileProbe", "call-succeeded");
-                    } else if ("service-peek".equals(report.optString("profileAccess"))) {
-                        report.put("profileProbe", "binding-required");
                     } else {
                         String dump = command("/system/bin/dumpsys", "bluetooth_manager");
                         String expected = sink ? "Profile: A2dpSinkService" : "Profile: A2dpService";
@@ -365,7 +363,7 @@ final class DeviceDiagnostics {
         report.put("configurationStrategy", standalone ? plan.configuration : legacy ? "existing-module" : "none");
         report.put("resourceStrategy", standalone ? plan.resources : legacy ? "existing-module" : "none");
         report.put("resourceHelperRequired", standalone && "packaged-idmap".equals(plan.resources));
-        report.put("profileBindingRequired", "service-peek".equals(report.optString("profileAccess")));
+        report.put("profileBindingRequired", false);
         report.put("planId", plan == null ? "" : plan.id());
         String verdict, title;
         if (report.has("bluetoothHardware") && Boolean.FALSE.equals(report.opt("bluetoothHardware"))) {

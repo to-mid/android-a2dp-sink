@@ -16,6 +16,7 @@ for generated in build/app-res build/classes build/dex build/app-assets; do
     if [ -d "$generated" ]; then rm -r "$generated"; fi
 done
 mkdir -p build/app-res build/classes build/dex build/app-assets
+cp app/assets/boot-restore.sh build/app-assets/
 "$BT/aapt2" compile --dir overlay/res -o build/overlay-res.zip
 "$BT/aapt2" link -I "$ANDROID" --manifest overlay/standalone-manifest.xml \
     --auto-add-overlay -o build/overlay.apk build/overlay-res.zip

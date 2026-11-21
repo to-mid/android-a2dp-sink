@@ -1,6 +1,7 @@
 package local.bluetooth.speaker;
 
 import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
 import android.os.ParcelUuid;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -102,6 +103,7 @@ final class RootController {
 
     private static void save(JSONObject config) throws Exception {
         if (selectedPlan != null && !"none".equals(selectedBackend)) config.put("adaptation", selectedPlan);
+        BootStartup.sync(config.optBoolean("restoreOnBoot"));
         saveExact(config);
     }
 
@@ -123,6 +125,17 @@ final class RootController {
             }
             if (lock == null) throw new IllegalStateException("另一个蓝牙操作正在进行");
             try { return action.call(); } finally { lock.release(); }
+        }
+    }
+
+    static boolean operationInProgress() throws Exception {
+        File path = new File(STATE, "control.lock");
+        if (!path.isFile()) return false;
+        try (RandomAccessFile file = new RandomAccessFile(path, "rw")) {
+            FileLock lock = file.getChannel().tryLock();
+            if (lock == null) return true;
+            lock.release();
+            return false;
         }
     }
 
@@ -180,6 +193,12 @@ final class RootController {
         requireReport(report);
         return locked(() -> {
             JSONObject config = settings();
+            // Restore may have been disabled while this process waited for the lock.
+            if (!config.optBoolean("restoreOnBoot"))
+                return new JSONObject().put("ok", true).put("skipped", true);
+            BootStartup.sync(true);
+            if (!"1".equals(property("sys.boot_completed")))
+                throw new IllegalStateException("系统尚未完成启动，稍后重试");
             String boot = DeviceDiagnostics.command("/system/bin/cat", "/proc/sys/kernel/random/boot_id");
             if (!boot.isEmpty() && boot.equals(config.optString("lastAppliedBoot")))
                 return new JSONObject().put("ok", true).put("alreadyApplied", true);
@@ -292,10 +311,12 @@ final class RootController {
     private static void apply(String desired, boolean on, boolean force, Snapshot before, JSONObject config) throws Exception {
         backup(config, before);
         if (!force && before.plan.optString("planId").equals(planId()) && desired.equals(before.mode)
-                && on == before.on && resourcesReady(desired) && (!on || profileReady(desired))) {
+                && on == before.on && resourcesReady(desired) && NativeCompatibility.ready(desired)
+                && (!on || profileReady(desired))) {
             if (on) verifyController(desired);
             return;
         }
+        disconnectAudio(before.mode);
         stop();
         // Each candidate starts from the saved baseline, including the other protocol's flags.
         writeProperties(config.getJSONObject("originalProperties"));
@@ -312,6 +333,10 @@ final class RootController {
         }
         writeProperties(values);
         focus(sink);
+        // OEM apps can request enable while resources are being changed. Never
+        // terminate an adapter that has restarted with a partially applied role.
+        stop();
+        NativeCompatibility.sync(desired);
         restartCachedProcess();
         if (on) {
             powerUnchecked(true);
@@ -324,6 +349,7 @@ final class RootController {
         writeProperties(before.properties);
         restoreOverlays(before.overlays);
         LegacyResources.restoreComponents(before.components);
+        NativeCompatibility.sync(before.mode);
         if (!before.helperInstalled && !LegacyResources.installed().isEmpty())
             ModuleControl.execute(25, "/system/bin/pm", "uninstall", LegacyResources.PACKAGE);
         restartCachedProcess();
@@ -332,6 +358,7 @@ final class RootController {
             powerUnchecked(true);
             waitForProfile(before.mode);
         }
+        BootStartup.sync(before.config.optBoolean("restoreOnBoot"));
         saveExact(before.config);
     }
 
@@ -353,11 +380,13 @@ final class RootController {
                 JSONObject overlays = config.optJSONObject("originalOverlays");
                 JSONObject components = config.optJSONObject("originalComponents");
                 if (!sameValues(before.properties, original) || !sameOverlays(before.overlays, overlays)
-                        || !sameValues(before.components, components) || before.on && !profileReady(originalMode)) {
+                        || !sameValues(before.components, components) || !NativeCompatibility.ready("source")
+                        || before.on && !profileReady(originalMode)) {
                     stop();
                     writeProperties(original);
                     restoreOverlays(overlays);
                     LegacyResources.restoreComponents(components);
+                    NativeCompatibility.sync("source");
                     restartCachedProcess();
                     if (before.on) {
                         powerUnchecked(true);
@@ -529,6 +558,29 @@ final class RootController {
         throw new IllegalStateException("蓝牙未能关闭");
     }
 
+    private static void disconnectAudio(String mode) throws Exception {
+        if (!isOn()) return;
+        boolean sink = "sink".equals(mode);
+        try {
+            Object profile = NativeBluetooth.profile(NativeBluetooth.adapter(), sink, targetPackage);
+            // Legacy binding may be absent after the activity unbinds. Disabling the
+            // adapter below still shuts down those connections through the system.
+            if (profile == null) return;
+            @SuppressWarnings("unchecked")
+            List<BluetoothDevice> connected = (List<BluetoothDevice>) NativeBluetooth.call(profile, sink, "getConnectedDevices");
+            for (BluetoothDevice device : connected) NativeBluetooth.call(profile, sink, "disconnect", device);
+            for (int i = 0; i < 20 && !connected.isEmpty(); i++) {
+                Thread.sleep(150);
+                @SuppressWarnings("unchecked")
+                List<BluetoothDevice> remaining = (List<BluetoothDevice>) NativeBluetooth.call(profile, sink, "getConnectedDevices");
+                connected = remaining;
+            }
+        } catch (Exception unavailable) {
+            // A legacy binder can disappear during an OEM-initiated transition.
+            // The following adapter shutdown still performs profile teardown.
+        } finally { NativeBluetooth.close(); }
+    }
+
     private static boolean profileReady(String mode) {
         String dump = DeviceDiagnostics.command("/system/bin/dumpsys", "bluetooth_manager");
         String expected = "sink".equals(mode) ? "Profile: A2dpSinkService" : "Profile: A2dpService";
@@ -547,8 +599,7 @@ final class RootController {
         try {
             Object profile = NativeBluetooth.profile(adapter, "sink".equals(mode), targetPackage);
             if (profile != null) NativeBluetooth.call(profile, "sink".equals(mode), "getConnectedDevices");
-            else if (!"service-peek".equals(NativeBluetooth.access()))
-                throw new IllegalStateException("音频服务控制接口未就绪");
+            else throw new IllegalStateException("音频服务控制接口未就绪");
         } finally { NativeBluetooth.close(); }
     }
 
@@ -570,6 +621,14 @@ final class RootController {
         if (ids.isEmpty()) return;
         for (String id : ids.split("\\s+"))
             if (id.matches("[0-9]+")) ModuleControl.execute(5, "/system/bin/kill", "-TERM", id);
-        Thread.sleep(800);
+        for (int i = 0; i < 40; i++) {
+            String remaining = " " + DeviceDiagnostics.command("/system/bin/pidof", targetPackage).trim() + " ";
+            boolean oldProcess = false;
+            for (String id : ids.split("\\s+"))
+                oldProcess |= remaining.matches("(?s).*\\b" + id + "\\b.*");
+            if (!oldProcess) return;
+            Thread.sleep(200);
+        }
+        throw new IllegalStateException("旧蓝牙进程尚未退出，已停止开启新角色");
     }
 }

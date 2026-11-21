@@ -6,8 +6,10 @@ import org.json.JSONObject;
 
 public final class BootRestoreService extends JobService {
     private Thread worker;
+    private volatile JobParameters active;
 
     @Override public boolean onStartJob(JobParameters parameters) {
+        active = parameters;
         worker = new Thread(() -> {
             String error = "";
             try {
@@ -19,15 +21,21 @@ public final class BootRestoreService extends JobService {
             } catch (Exception failure) {
                 error = failure.toString();
             }
-            createDeviceProtectedStorageContext().getSharedPreferences("startup", MODE_PRIVATE)
-                .edit().putString("lastError", error).apply();
-            jobFinished(parameters, false);
+            String outcome = error;
+            getMainExecutor().execute(() -> {
+                if (active != parameters) return;
+                active = null;
+                createDeviceProtectedStorageContext().getSharedPreferences("startup", MODE_PRIVATE)
+                    .edit().putString("lastError", outcome).apply();
+                jobFinished(parameters, !outcome.isEmpty());
+            });
         }, "bluetooth-boot-restore");
         worker.start();
         return true;
     }
 
     @Override public boolean onStopJob(JobParameters parameters) {
+        active = null;
         if (worker != null) worker.interrupt();
         return true;
     }

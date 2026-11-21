@@ -17,7 +17,7 @@ args = parser.parse_args()
 
 
 def adb(*command):
-    result = subprocess.run(["adb", "-s", args.serial, *command], text=True,
+    result = subprocess.run(["adb", "-s", args.serial, *command], text=True, encoding="utf-8",
                             capture_output=True, timeout=330)
     if result.returncode:
         raise RuntimeError(result.stdout + result.stderr)
@@ -101,6 +101,9 @@ try:
     unchanged = enable_log()
     call("enable")
     assert enable_log() == unchanged, "Repeated enable interrupted Bluetooth"
+    for _ in range(3):
+        call("status")
+    assert enable_log() == unchanged, "Status polling interrupted Bluetooth"
     for mode in ("source", "sink"):
         call("mode", mode)
         check(mode, True)
@@ -113,10 +116,13 @@ try:
         call("disable")
     call("enable")
     call("default-mode", "source")
+    assert call("status")["rootBootHook"], "Root startup hook was not installed"
+    unchanged = enable_log()
     boot = call("apply-boot")
     if not boot.get("alreadyApplied"):
         check("source", True)
     assert call("apply-boot").get("alreadyApplied"), "Boot restore is not idempotent"
+    assert enable_log() == unchanged, "Delayed boot job overrode a manual role selection"
     original = saved.get("originalProperties")
     if original is None:
         original = json.loads(root("cat /data/user_de/0/local.bluetooth.speaker/files/root-control/settings.json"))["originalProperties"]
@@ -126,6 +132,8 @@ try:
     call("restore")
     restored = check(original_mode, True)
     assert not restored["restoreOnBoot"], restored
+    assert not restored["rootBootHook"], "Restore left the root startup hook installed"
+    assert call("apply-boot").get("skipped"), "Disabled boot restore still applied a role"
     unchanged = enable_log()
     call("restore")
     assert not check(original_mode, True)["restoreOnBoot"]
